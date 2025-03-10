@@ -1,0 +1,219 @@
+﻿@model CleaningService.Models.AdminDashboardViewModel
+@using Newtonsoft.Json
+@{
+    ViewData["Title"] = "Cleaning Admin Dashboard";
+}
+
+<style>
+    body {
+        background-color: #f2f5f7;
+        color: #343a40;
+        font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    }
+
+    .card {
+        border: none;
+        border-radius: 0.75rem;
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        margin-bottom: 1.5rem;
+    }
+
+    .card-header {
+        background: #17a2b8;
+        color: #fff;
+        font-size: 1.1rem;
+        border-top-left-radius: 0.75rem;
+        border-top-right-radius: 0.75rem;
+    }
+
+    .card-body {
+        background: #fff;
+        border-bottom-left-radius: 0.75rem;
+        border-bottom-right-radius: 0.75rem;
+        padding: 1.5rem;
+    }
+
+    h2, .h2 {
+        margin-top: 1rem;
+        margin-bottom: 1rem;
+        text-align: center;
+    }
+
+    .table th, .table td {
+        vertical-align: middle;
+        text-align: center;
+    }
+</style>
+
+<div class="container mt-4">
+    <h2 class="mb-4 text-center">Cleaning Admin Dashboard</h2>
+
+    @if (TempData["Message"] != null)
+    {
+        <div class="alert alert-success">@TempData["Message"]</div>
+    }
+    @if (TempData["Error"] != null)
+    {
+        <div class="alert alert-danger">@TempData["Error"]</div>
+    }
+
+    <!-- Верхняя панель: Режим и Capacity -->
+    <div class="row">
+        <!-- Режим общения -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">Communication Mode</div>
+                <div class="card-body">
+                    <form method="post">
+                        <input type="hidden" name="actionType" value="ToggleCommMode" />
+                        <div class="form-group">
+                            <label>Use Mock?</label>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="useMock" id="useMockTrue" value="true" @(ViewBag.UseMock == true ? "checked" : "")>
+                                <label class="form-check-label" for="useMockTrue">Yes (Mock)</label>
+                            </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="useMock" id="useMockFalse" value="false" @(ViewBag.UseMock == false ? "checked" : "")>
+                                <label class="form-check-label" for="useMockFalse">No (Real)</label>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Set Mode</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <!-- Water Capacity -->
+        <div class="col-md-6">
+            <div class="card">
+                <div class="card-header">Water Capacity</div>
+                <div class="card-body">
+                    <p>Current capacity: <strong>@Model.WaterCapacity</strong></p>
+                    <form method="post">
+                        <input type="hidden" name="actionType" value="UpdateCapacity" />
+                        <div class="form-group">
+                            <label for="newCapacity">New Capacity</label>
+                            <input type="number" class="form-control" name="newCapacity" id="newCapacity" required />
+                        </div>
+                        <button type="submit" class="btn btn-primary">Update Capacity</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Форма запроса очистки -->
+    <div class="card">
+        <div class="card-header">Create Cleaning Request</div>
+        <div class="card-body">
+            <form id="cleaningRequestForm">
+                <input type="hidden" name="actionType" value="RequestCleaning" />
+                <div class="form-group">
+                    <label for="aircraftId">Aircraft ID</label>
+                    <input type="text" class="form-control" name="aircraftId" id="aircraftId" placeholder="e.g. BOEING-777" required />
+                </div>
+                <div class="form-group">
+                    <label for="nodeId">Node ID</label>
+                    <input type="text" class="form-control" name="nodeId" id="nodeId" placeholder="e.g. CLEANING-STATION-1" required />
+                </div>
+                <div class="form-group">
+                    <label for="waterAmount">Water Amount</label>
+                    <input type="number" class="form-control" name="waterAmount" id="waterAmount" placeholder="Enter water amount" min="0" required />
+                </div>
+                <button type="submit" class="btn btn-primary">Send Cleaning Request</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Таблица с информацией о транспортных средствах -->
+    <div class="card mt-4">
+        <div class="card-header">Cleaning Vehicles Status (Real-Time Updates)</div>
+        <div class="card-body">
+            <table class="table table-bordered" id="vehiclesTable">
+                <thead>
+                    <tr>
+                        <th>Vehicle ID</th>
+                        <th>Base Node</th>
+                        <th>Status</th>
+                        <th>Service Spots</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var vehicle in Model.Vehicles)
+                    {
+                        <tr>
+                            <td>@vehicle.VehicleId</td>
+                            <td>@vehicle.BaseNode</td>
+                            <td>@vehicle.Status</td>
+                            <td>
+                                @if (vehicle.ServiceSpots != null && vehicle.ServiceSpots.Count > 0)
+                                {
+                                    <ul class="m-0 p-0" style="list-style: none;">
+                                        @foreach (var spot in vehicle.ServiceSpots)
+                                        {
+                                            <li>@spot.Key : @spot.Value</li>
+                                        }
+                                    </ul>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Подключение jQuery, SignalR и дополнительного JS -->
+<script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/6.0.0/signalr.min.js"></script>
+<script type="text/javascript">
+    $(document).ready(function () {
+        // AJAX отправка формы запроса очистки
+        $("#cleaningRequestForm").submit(function (e) {
+            e.preventDefault();
+            var data = $(this).serialize();
+            $.ajax({
+                type: "POST",
+                url: "/Admin/Index",
+                data: data,
+                headers: { "X-Requested-With": "XMLHttpRequest" },
+                success: function (response) {
+                    alert(response.message);
+                },
+                error: function (xhr) {
+                    alert("Error: " + xhr.responseText);
+                }
+            });
+        });
+    });
+
+    // Подключение к SignalR-хабу для обновления состояния транспорта
+    const connection = new signalR.HubConnectionBuilder()
+        .withUrl("/vehiclestatushub")
+        .build();
+
+    connection.on("ReceiveVehicleUpdate", function (vehicles) {
+        const tbody = document.getElementById("vehiclesTable").getElementsByTagName("tbody")[0];
+        tbody.innerHTML = "";
+        vehicles.forEach(function (vehicle) {
+            let row = tbody.insertRow();
+            row.insertCell(0).innerText = vehicle.vehicleId;
+            row.insertCell(1).innerText = vehicle.baseNode;
+            row.insertCell(2).innerText = vehicle.status;
+            let cellSpots = row.insertCell(3);
+            if (vehicle.serviceSpots) {
+                let spots = "";
+                for (let key in vehicle.serviceSpots) {
+                    spots += key + " : " + vehicle.serviceSpots[key] + "\n";
+                }
+                cellSpots.innerText = spots;
+            }
+        });
+    });
+
+    connection.start().then(function () {
+        console.log("Connected to VehicleStatusHub");
+    }).catch(function (err) {
+        console.error(err.toString());
+    });
+</script>
