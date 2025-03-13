@@ -4,8 +4,8 @@ namespace CleaningService.Services
 {
     public class CommModeService : ICommModeService
     {
+        private bool _useMock = false;
         private readonly ILogger<CommModeService> _logger;
-        private bool _useMock = true; // По умолчанию используется Mock
         public CommModeService(ILogger<CommModeService> logger)
         {
             _logger = logger;

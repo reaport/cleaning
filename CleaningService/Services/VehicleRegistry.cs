@@ -7,8 +7,18 @@ namespace CleaningService.Services
 {
     public class VehicleRegistry : IVehicleRegistry
     {
-        private readonly Dictionary<string, string> _vehicleStatus = new Dictionary<string, string>();
-        private readonly Dictionary<string, Dictionary<string, string>> _serviceMapping = new Dictionary<string, Dictionary<string, string>>();
+        // Внутренний класс для хранения информации о транспортном средстве
+        private class VehicleInfo
+        {
+            public string VehicleId { get; set; }
+            public string BaseNode { get; set; }
+            public string CurrentNode { get; set; }
+            public string Status { get; set; } // "Available" или "Busy"
+            public Dictionary<string, string> ServiceSpots { get; set; }
+        }
+
+        // Храним информацию по ТС: ключ – VehicleId, значение – объект VehicleInfo
+        private readonly Dictionary<string, VehicleInfo> _vehicles = new Dictionary<string, VehicleInfo>();
         private readonly object _syncLock = new object();
         private readonly ILogger<VehicleRegistry> _logger;
 
@@ -21,19 +31,19 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                var entry = _vehicleStatus.FirstOrDefault(kvp => kvp.Value != "in use");
-                if (!string.IsNullOrEmpty(entry.Key))
+                foreach (var vehicle in _vehicles.Values)
                 {
-                    string vehicleId = entry.Key;
-                    string baseNode = entry.Value;
-                    string? destination = null;
-                    if (_serviceMapping.ContainsKey(vehicleId) && _serviceMapping[vehicleId].ContainsKey(aircraftId))
+                    if (vehicle.Status == "Available")
                     {
-                        destination = _serviceMapping[vehicleId][aircraftId];
+                        vehicle.Status = "Busy";
+                        _logger.LogInformation("AcquireAvailableVehicle: using {VehicleId} for aircraft {AircraftId}", vehicle.VehicleId, aircraftId);
+                        string destination = null;
+                        if (vehicle.ServiceSpots != null && vehicle.ServiceSpots.ContainsKey(aircraftId))
+                        {
+                            destination = vehicle.ServiceSpots[aircraftId];
+                        }
+                        return (vehicle.VehicleId, vehicle.BaseNode, destination);
                     }
-                    _vehicleStatus[vehicleId] = "in use";
-                    _logger.LogInformation("AcquireAvailableVehicle: using {VehicleId} for aircraft {AircraftId}", vehicleId, aircraftId);
-                    return (vehicleId, baseNode, destination);
                 }
             }
             _logger.LogWarning("AcquireAvailableVehicle: no free vehicle for aircraft {AircraftId}", aircraftId);
@@ -44,9 +54,10 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                if (_vehicleStatus.ContainsKey(vehicleId))
+                if (_vehicles.ContainsKey(vehicleId))
                 {
-                    _vehicleStatus[vehicleId] = baseNode;
+                    _vehicles[vehicleId].Status = "Available";
+                    _vehicles[vehicleId].CurrentNode = baseNode;
                     _logger.LogInformation("ReleaseVehicle: vehicle {VehicleId} returned to base {BaseNode}", vehicleId, baseNode);
                 }
             }
@@ -56,11 +67,17 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                if (_vehicleStatus.Count < 5)
+                if (_vehicles.Count < 5)
                 {
-                    _vehicleStatus[vehicleId] = baseNode;
-                    _serviceMapping[vehicleId] = serviceSpots;
-                    _logger.LogInformation("AddVehicle: {VehicleId} at base {BaseNode}", vehicleId, baseNode);
+                    _vehicles[vehicleId] = new VehicleInfo
+                    {
+                        VehicleId = vehicleId,
+                        BaseNode = baseNode,
+                        CurrentNode = baseNode,
+                        Status = "Available",
+                        ServiceSpots = serviceSpots
+                    };
+                    _logger.LogInformation("AddVehicle: {VehicleId} added at base {BaseNode}", vehicleId, baseNode);
                 }
                 else
                 {
@@ -73,7 +90,7 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                return _vehicleStatus.Count < 5;
+                return _vehicles.Count < 5;
             }
         }
 
@@ -81,10 +98,16 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                if (_vehicleStatus.Count < 5)
+                if (_vehicles.Count < 5)
                 {
-                    _vehicleStatus[vehicleId] = baseNode;
-                    _serviceMapping[vehicleId] = serviceSpots;
+                    _vehicles[vehicleId] = new VehicleInfo
+                    {
+                        VehicleId = vehicleId,
+                        BaseNode = baseNode,
+                        CurrentNode = baseNode,
+                        Status = "Available",
+                        ServiceSpots = serviceSpots
+                    };
                     _logger.LogInformation("TryAddVehicle: Vehicle {VehicleId} added.", vehicleId);
                     return true;
                 }
@@ -100,9 +123,9 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                if (_vehicleStatus.ContainsKey(vehicleId))
+                if (_vehicles.ContainsKey(vehicleId))
                 {
-                    _vehicleStatus[vehicleId] = "in use";
+                    _vehicles[vehicleId].Status = "Busy";
                     _logger.LogInformation("MarkAsBusy: vehicle {VehicleId} marked as Busy", vehicleId);
                 }
             }
@@ -112,10 +135,23 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                if (_vehicleStatus.ContainsKey(vehicleId))
+                if (_vehicles.ContainsKey(vehicleId))
                 {
-                    _vehicleStatus[vehicleId] = baseNode;
+                    _vehicles[vehicleId].Status = "Available";
+                    _vehicles[vehicleId].CurrentNode = baseNode;
                     _logger.LogInformation("MarkAsAvailable: vehicle {VehicleId} marked as Available", vehicleId);
+                }
+            }
+        }
+
+        public void UpdateCurrentNode(string vehicleId, string currentNode)
+        {
+            lock (_syncLock)
+            {
+                if (_vehicles.ContainsKey(vehicleId))
+                {
+                    _vehicles[vehicleId].CurrentNode = currentNode;
+                    _logger.LogInformation("UpdateCurrentNode: vehicle {VehicleId} current node updated to {CurrentNode}", vehicleId, currentNode);
                 }
             }
         }
@@ -124,24 +160,22 @@ namespace CleaningService.Services
         {
             lock (_syncLock)
             {
-                var list = new List<CleaningVehicleStatusInfo>();
-                foreach (var kvp in _vehicleStatus)
+                return _vehicles.Values.Select(v => new CleaningVehicleStatusInfo
                 {
-                    string vehicleId = kvp.Key;
-                    bool isBusy = kvp.Value == "in use";
-                    string baseNode = isBusy ? "N/A" : kvp.Value;
-                    Dictionary<string, string> serviceSpots = _serviceMapping.ContainsKey(vehicleId)
-                        ? _serviceMapping[vehicleId]
-                        : new Dictionary<string, string>();
-                    list.Add(new CleaningVehicleStatusInfo
-                    {
-                        VehicleId = vehicleId,
-                        BaseNode = baseNode,
-                        Status = isBusy ? "Busy" : "Available",
-                        ServiceSpots = serviceSpots
-                    });
-                }
-                return list;
+                    VehicleId = v.VehicleId,
+                    BaseNode = v.BaseNode,
+                    Status = v.Status,
+                    CurrentNode = v.CurrentNode
+                }).ToList();
+            }
+        }
+
+        public void Reset()
+        {
+            lock (_syncLock)
+            {
+                _vehicles.Clear();
+                _logger.LogInformation("Vehicle registry reset.");
             }
         }
     }

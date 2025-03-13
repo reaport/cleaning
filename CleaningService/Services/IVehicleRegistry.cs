@@ -10,10 +10,10 @@ namespace CleaningService.Services
         void AddVehicle(string vehicleId, string baseNode, Dictionary<string, string> serviceSpots);
         bool CanRegisterNewVehicle();
         bool TryAddVehicle(string vehicleId, string baseNode, Dictionary<string, string> serviceSpots);
-
         void MarkAsBusy(string vehicleId);
         void MarkAsAvailable(string vehicleId, string baseNode);
-
+        void UpdateCurrentNode(string vehicleId, string currentNode);
         IEnumerable<CleaningVehicleStatusInfo> GetAllVehicles();
+        void Reset();
     }
 }

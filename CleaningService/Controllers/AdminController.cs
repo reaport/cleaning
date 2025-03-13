@@ -1,122 +1,132 @@
 ﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 using CleaningService.Models;
 using CleaningService.Services;
-using Newtonsoft.Json;
 
 namespace CleaningService.Controllers
 {
+    [Route("admin")]
     public class AdminController : Controller
     {
-        private readonly ICapacityService _capacityService;
-        private readonly ICommModeService _commModeService;
+        private readonly IAdminConfigService _adminConfigService;
         private readonly ICleaningProcessService _cleaningProcessService;
         private readonly IVehicleRegistry _vehicleRegistry;
+        private readonly ICommModeService _commModeService;
+        private readonly ICapacityService _capacityService;
         private readonly ILogger<AdminController> _logger;
 
         public AdminController(
-            ICapacityService capacityService,
-            ICommModeService commModeService,
+            IAdminConfigService adminConfigService,
             ICleaningProcessService cleaningProcessService,
             IVehicleRegistry vehicleRegistry,
+            ICommModeService commModeService,
+            ICapacityService capacityService,
             ILogger<AdminController> logger)
         {
-            _capacityService = capacityService;
-            _commModeService = commModeService;
+            _adminConfigService = adminConfigService;
             _cleaningProcessService = cleaningProcessService;
             _vehicleRegistry = vehicleRegistry;
+            _commModeService = commModeService;
+            _capacityService = capacityService;
             _logger = logger;
         }
 
         [HttpGet]
         public IActionResult Index()
         {
-            var vehicles = _vehicleRegistry.GetAllVehicles();
-            var model = new AdminDashboardViewModel
+            var model = new AdminViewModel
             {
-                WaterCapacity = _capacityService.GetCapacity(),
-                ModuleMode = _commModeService.UseMock ? "Mock" : "Real",
-                Vehicles = new List<CleaningVehicleStatusInfo>(vehicles)
+                Config = _adminConfigService.GetConfig(),
+                Vehicles = _cleaningProcessService.GetVehiclesInfo(),
+                Mode = _commModeService.UseMock ? "Mock" : "Real"
             };
             return View(model);
         }
 
-        [HttpPost]
-        public async Task<IActionResult> Index(
-            string actionType,
-            int? newCapacity,
-            string aircraftId,
-            string nodeId,
-            int? waterAmount,
-            bool? useMock)
+        [HttpPost("update")]
+        public IActionResult Update([FromBody] UpdateConfigRequest updateRequest)
         {
-            try
+            if (updateRequest == null)
             {
-                switch (actionType)
-                {
-                    case "ToggleCommMode":
-                        if (useMock.HasValue)
-                        {
-                            _commModeService.UseMock = useMock.Value;
-                            _logger.LogInformation("Admin set UseMock={UseMock}", useMock.Value);
-                            TempData["Message"] = "Communication mode updated.";
-                        }
-                        break;
-
-                    case "UpdateCapacity":
-                        if (!newCapacity.HasValue || newCapacity < 0)
-                        {
-                            TempData["Error"] = "Invalid water capacity value.";
-                        }
-                        else
-                        {
-                            _capacityService.UpdateCapacity(newCapacity.Value);
-                            _logger.LogInformation("Admin updated water capacity to {Capacity}", newCapacity.Value);
-                            TempData["Message"] = "Water capacity updated.";
-                        }
-                        break;
-
-                    case "RequestCleaning":
-                        try
-                        {
-                            if (!waterAmount.HasValue)
-                                throw new ArgumentException("WaterAmount is required");
-                            var request = new RequestCleaningInput
-                            {
-                                AircraftId = aircraftId,
-                                NodeId = nodeId,
-                                WaterAmount = waterAmount.Value
-                            };
-                            // Запускаем процесс в фоне (через AJAX)
-                            if (Request.Headers["X-Requested-With"] == "XMLHttpRequest")
-                            {
-                                Task.Run(() => _cleaningProcessService.ProcessCleaningRequest(request));
-                                return Json(new { message = "Cleaning request started. Updates will appear in real time." });
-                            }
-                            else
-                            {
-                                Task.Run(() => _cleaningProcessService.ProcessCleaningRequest(request));
-                                TempData["Message"] = "Cleaning request started.";
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            TempData["Error"] = "Error processing cleaning request: " + ex.Message;
-                            _logger.LogError(ex, "Error in RequestCleaning");
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                TempData["Error"] = "Internal server error.";
-                _logger.LogError(ex, "Error in AdminController POST");
+                _logger.LogWarning("UpdateConfig: Empty request body.");
+                return BadRequest(new ErrorResponse { Error = "Invalid configuration data." });
             }
 
-            return RedirectToAction("Index");
+            _logger.LogInformation("Received configuration update: {@UpdateRequest}", updateRequest);
+
+            var config = new AdminConfig
+            {
+                ConflictRetryCount = updateRequest.ConflictRetryCount,
+                MovementSpeed = updateRequest.MovementSpeed,
+                NumberOfCleaningVehicles = updateRequest.NumberOfCleaningVehicles
+            };
+
+            _adminConfigService.UpdateConfig(config);
+            _logger.LogInformation("Configuration updated: RetryCount={RetryCount}, MovementSpeed={Speed}, Vehicles={Vehicles}",
+                config.ConflictRetryCount, config.MovementSpeed, config.NumberOfCleaningVehicles);
+
+            return Ok(new { message = "Configuration updated successfully." });
+        }
+
+        [HttpPost("toggleMode")]
+        public IActionResult ToggleMode([FromForm] bool useMock)
+        {
+            _commModeService.UseMock = useMock;
+            _logger.LogInformation("Admin set UseMock={UseMock}", useMock);
+            return Ok(new { message = "Communication mode updated." });
+        }
+
+        [HttpPost("updateCapacityAdmin")]
+        public IActionResult UpdateCapacityAdmin([FromBody] VehicleCapacity capacity)
+        {
+            if (capacity == null || capacity.Capacity < 0)
+            {
+                _logger.LogWarning("Invalid capacity value provided.");
+                return BadRequest(new ErrorResponse { Error = "Invalid capacity value." });
+            }
+            _capacityService.UpdateCapacity((int)capacity.Capacity);
+            _logger.LogInformation("Capacity updated to {Capacity}", capacity.Capacity);
+            return Ok(new { message = "Capacity updated successfully.", capacity = capacity.Capacity });
+        }
+
+        [HttpPost("registerVehicle")]
+        public async Task<IActionResult> RegisterVehicle([FromBody] RegisterVehicleRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Type))
+            {
+                _logger.LogWarning("Registration request: Empty or missing Type.");
+                return BadRequest(new { error = "Type is required." });
+            }
+
+            _logger.LogInformation("Registration request received: Type = {Type}", request.Type);
+
+            int numberOfVehicles = _adminConfigService.GetConfig().NumberOfCleaningVehicles;
+            _logger.LogInformation("Registering {Count} vehicles of type {Type}", numberOfVehicles, request.Type);
+
+            int successfulRegistrations = 0;
+            for (int i = 0; i < numberOfVehicles; i++)
+            {
+                bool success = await _cleaningProcessService.RegisterVehicleAsync(request.Type);
+                if (success)
+                    successfulRegistrations++;
+            }
+
+            if (successfulRegistrations > 0)
+            {
+                _logger.LogInformation("{Count} vehicles of type {Type} registered.", successfulRegistrations, request.Type);
+            }
+
+            return Ok(new { registeredVehicles = successfulRegistrations, message = "Vehicles registered successfully." });
+        }
+
+        [HttpPost("reload")]
+        public async Task<IActionResult> Reload()
+        {
+            _logger.LogInformation("Received request to reload application. All data will be reset.");
+            await _cleaningProcessService.ReloadAsync();
+            _logger.LogInformation("Application reloaded: Vehicle registry and counters reset.");
+            return Ok(new { message = "Application reloaded successfully." });
         }
     }
 }

@@ -1,10 +1,9 @@
 ﻿namespace CleaningService.Models
 {
-    public class CleaningVehicleStatusInfo
+    public class CleaningVehicleInfo
     {
         public string VehicleId { get; set; }
-        public string BaseNode { get; set; }
-        public string CurrentNode { get; set; }
         public string Status { get; set; }
+        public string CurrentNode { get; set; }
     }
 }

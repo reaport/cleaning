@@ -1,6 +1,4 @@
-﻿using CleaningService.Models;
-
-namespace CleaningService.Services
+﻿namespace CleaningService.Services
 {
     public interface ICapacityService
     {

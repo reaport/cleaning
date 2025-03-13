@@ -1,44 +1,73 @@
+п»їusing CleaningService.Hubs;
+using CleaningService.Services;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using CleaningService.Services;
-using CleaningService.Hubs;
+using Microsoft.Extensions.Logging;
+using System;
+using System.Threading.Tasks;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Добавляем поддержку контроллеров с представлениями (MVC)
+// РСЃРїРѕР»СЊР·СѓРµРј СЃС‚Р°РЅРґР°СЂС‚РЅРѕРµ Р»РѕРіРёСЂРѕРІР°РЅРёРµ (РєРѕРЅСЃРѕР»СЊ)
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+
+// РљРѕРЅС‚СЂРѕР»Р»РµСЂС‹ СЃ РїСЂРµРґСЃС‚Р°РІР»РµРЅРёСЏРјРё (РµСЃР»Рё admin РёРЅС‚РµСЂС„РµР№СЃ РЅСѓР¶РµРЅ)
 builder.Services.AddControllersWithViews();
 builder.Services.AddHttpClient();
 
-// Регистрация сервисов
+// РќР°СЃС‚СЂР°РёРІР°РµРј РёРјРµРЅРѕРІР°РЅРЅС‹Рµ HttpClientвЂ‘С‹ РґР»СЏ РІРЅРµС€РЅРёС… API
+builder.Services.AddHttpClient("ExternalApi", client =>
+{
+    var baseUrl = builder.Configuration["ExternalApi:BaseUrl"];
+    client.BaseAddress = new Uri(baseUrl);
+});
+builder.Services.AddHttpClient("Orchestrator", client =>
+{
+    var baseUrl = builder.Configuration["Orchestrator:BaseUrl"];
+    client.BaseAddress = new Uri(baseUrl);
+});
+
+// Р РµРіРёСЃС‚СЂР°С†РёСЏ СЃРµСЂРІРёСЃРѕРІ РїСЂРёР»РѕР¶РµРЅРёСЏ
 builder.Services.AddSingleton<IVehicleRegistry, VehicleRegistry>();
 builder.Services.AddSingleton<ICapacityService, CapacityService>();
 builder.Services.AddSingleton<ICommModeService, CommModeService>();
-builder.Services.AddScoped<IGroundControlClient, GroundControlClient>();
+builder.Services.AddScoped<IExternalApiService, ExternalApiService>();
 builder.Services.AddScoped<ICleaningProcessService, CleaningProcessService>();
+builder.Services.AddSingleton<IAdminConfigService, AdminConfigService>();
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Регистрируем SignalR
+// Р РµРіРёСЃС‚СЂРёСЂСѓРµРј SignalR
 builder.Services.AddSignalR();
 
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
+    app.UseDeveloperExceptionPage();
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
 app.UseStaticFiles();
-app.UseHttpsRedirection();
+app.UseRouting();
+app.UseCors("AllowLocalhost");
+
+// Р•СЃР»Рё Р·Р°РїСЂРѕСЃ РїРѕ РєРѕСЂРЅРµРІРѕРјСѓ URL, РїРµСЂРµРЅР°РїСЂР°РІР»СЏРµРј РЅР° "/admin"
+app.MapGet("/", context =>
+{
+    context.Response.Redirect("/admin");
+    return Task.CompletedTask;
+});
 
 app.MapControllerRoute(
     name: "default",
-    pattern: "{controller=Admin}/{action=Index}/{id?}");
+    pattern: "{controller=Admin}/{action=Index}/{id?}"
+);
 
-// Маппинг хаба для обновления статуса транспортных средств
 app.MapHub<VehicleStatusHub>("/vehiclestatushub");
 
 app.Run();
