@@ -57,39 +57,52 @@ namespace CleaningService.Services
             // Уведомляем оркестратора о старте очистки
             await _externalApiService.NotifyCleaningStartAsync(request.AircraftId);
 
-            int remainingWater = request.WaterAmount;
-            int vehicleCapacity = _capacityService.GetCapacity();
+            // Проверяем, есть ли свободные транспортные средства на данный момент
+            var vehicles = _vehicleRegistry.GetAllVehicles().ToList();
+            bool freeAvailable = vehicles.Any(v => v.Status.Equals("Available", StringComparison.OrdinalIgnoreCase));
 
-            while (remainingWater > 0)
+            // Если свободные машины есть, сразу отправляем ответ с wait = false,
+            // иначе wait = true (будет ожидание освобождения ТС в фоне)
+            var response = new RequestCleaningResponse { wait = freeAvailable ? false : true };
+
+            // Фоновая обработка запроса (fire-and-forget)
+            _ = Task.Run(async () =>
             {
-                await WaitUntilFlightVehicleCountLessThan(request.AircraftId, MaxVehiclesPerAircraft);
-                int vehiclesToDispatch = remainingWater > vehicleCapacity ? 2 : 1;
+                int remainingWater = request.WaterAmount;
+                int vehicleCapacity = _capacityService.GetCapacity();
 
-                // Если глобальный лимит достигнут – ждем освобождения транспортных средств
-                while (_vehicleRegistry.GetAllVehicles().Count() >= MaxVehicles &&
-                       _vehicleRegistry.GetAllVehicles().All(v => v.Status == "Busy"))
+                while (remainingWater > 0)
                 {
-                    _logger.LogInformation("Global vehicle limit reached. Waiting for an available vehicle...");
-                    await Task.Delay(1000);
-                }
-
-                var batchTasks = new List<Task>();
-                for (int i = 0; i < vehiclesToDispatch; i++)
-                {
-                    int waterForVehicle = Math.Min(vehicleCapacity, remainingWater - i * vehicleCapacity);
                     await WaitUntilFlightVehicleCountLessThan(request.AircraftId, MaxVehiclesPerAircraft);
-                    IncrementFlightVehicleCount(request.AircraftId);
-                    batchTasks.Add(ProcessSingleCleaningOperation(request, waterForVehicle, request.AircraftId));
-                }
-                await Task.WhenAll(batchTasks);
-                remainingWater -= vehiclesToDispatch * vehicleCapacity;
-                if (remainingWater < 0)
-                    remainingWater = 0;
-            }
+                    int vehiclesToDispatch = remainingWater > vehicleCapacity ? 2 : 1;
 
-            await _externalApiService.NotifyCleaningFinishAsync(request.AircraftId, request.WaterAmount);
-            return new RequestCleaningResponse { wait = true };
+                    while (_vehicleRegistry.GetAllVehicles().Count() >= MaxVehicles &&
+                           _vehicleRegistry.GetAllVehicles().All(v => v.Status.Equals("Busy", StringComparison.OrdinalIgnoreCase)))
+                    {
+                        _logger.LogInformation("Global vehicle limit reached. Waiting for an available vehicle...");
+                        await Task.Delay(1000);
+                    }
+
+                    var batchTasks = new List<Task>();
+                    for (int i = 0; i < vehiclesToDispatch; i++)
+                    {
+                        int waterForVehicle = Math.Min(vehicleCapacity, remainingWater - i * vehicleCapacity);
+                        await WaitUntilFlightVehicleCountLessThan(request.AircraftId, MaxVehiclesPerAircraft);
+                        IncrementFlightVehicleCount(request.AircraftId);
+                        batchTasks.Add(ProcessSingleCleaningOperation(request, waterForVehicle, request.AircraftId));
+                    }
+                    await Task.WhenAll(batchTasks);
+                    remainingWater -= vehiclesToDispatch * vehicleCapacity;
+                    if (remainingWater < 0)
+                        remainingWater = 0;
+                }
+
+                await _externalApiService.NotifyCleaningFinishAsync(request.AircraftId, request.WaterAmount);
+            });
+
+            return response;
         }
+
 
         private async Task ProcessSingleCleaningOperation(RequestCleaningInput request, int waterForVehicle, string flightId)
         {
