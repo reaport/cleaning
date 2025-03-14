@@ -57,15 +57,14 @@ namespace CleaningService.Services
             // Уведомляем оркестратора о старте очистки
             await _externalApiService.NotifyCleaningStartAsync(request.AircraftId);
 
-            // Проверяем, есть ли свободные транспортные средства на данный момент
+            // Проверяем, есть ли свободные транспортные средства сейчас
             var vehicles = _vehicleRegistry.GetAllVehicles().ToList();
             bool freeAvailable = vehicles.Any(v => v.Status.Equals("Available", StringComparison.OrdinalIgnoreCase));
 
-            // Если свободные машины есть, сразу отправляем ответ с wait = false,
-            // иначе wait = true (будет ожидание освобождения ТС в фоне)
+            // Если свободные машины есть, отправляем ответ с wait = false, иначе wait = true
             var response = new RequestCleaningResponse { wait = freeAvailable ? false : true };
 
-            // Фоновая обработка запроса (fire-and-forget)
+            // Фоновая обработка запроса
             _ = Task.Run(async () =>
             {
                 int remainingWater = request.WaterAmount;
@@ -103,7 +102,6 @@ namespace CleaningService.Services
             return response;
         }
 
-
         private async Task ProcessSingleCleaningOperation(RequestCleaningInput request, int waterForVehicle, string flightId)
         {
             string vehicleId = null;
@@ -112,7 +110,6 @@ namespace CleaningService.Services
 
             try
             {
-                // Получаем доступное транспортное средство
                 var vehicleInfo = _vehicleRegistry.AcquireAvailableVehicle(request.AircraftId);
                 if (string.IsNullOrEmpty(vehicleInfo.VehicleId))
                 {
@@ -189,7 +186,6 @@ namespace CleaningService.Services
                 _logger.LogInformation("Performing cleaning operation on vehicle {VehicleId} for {WaterAmount} units", vehicleId, waterForVehicle);
                 await Task.Delay(5000);
 
-                // Обратный маршрут: от destination до baseNode
                 List<string> returnRoute = await _externalApiService.GetRouteAsync(destination, baseNode, "cleaning");
                 if (returnRoute != null && returnRoute.Count >= 2)
                 {
@@ -298,6 +294,26 @@ namespace CleaningService.Services
             }
         }
 
+        // Новый метод: регистрация транспортных средств при запуске сервиса
+        public async Task InitializeVehiclesAsync()
+        {
+            var config = _adminConfigService.GetConfig();
+            int numberOfVehicles = config.NumberOfCleaningVehicles;
+            _logger.LogInformation("Initializing {Count} cleaning vehicles on startup.", numberOfVehicles);
+            for (int i = 0; i < numberOfVehicles; i++)
+            {
+                bool success = await RegisterVehicleAsync("cleaning");
+                if (success)
+                {
+                    _logger.LogInformation("Vehicle registered successfully on startup.");
+                }
+                else
+                {
+                    _logger.LogWarning("Vehicle registration failed on startup.");
+                }
+            }
+        }
+
         public async Task ReloadAsync()
         {
             _vehicleRegistry.Reset();
@@ -306,12 +322,11 @@ namespace CleaningService.Services
                 FlightVehicleCount.Clear();
             }
             _logger.LogInformation("System reloaded: vehicle registry and flight counters reset.");
-            await Task.CompletedTask;
+            await InitializeVehiclesAsync();
         }
 
         public IEnumerable<CleaningVehicleStatusInfo> GetVehiclesInfo()
         {
-            // Возвращаем список статусной информации транспортных средств
             return _vehicleRegistry.GetAllVehicles();
         }
     }

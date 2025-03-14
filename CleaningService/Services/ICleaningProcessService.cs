@@ -10,5 +10,6 @@ namespace CleaningService.Services
         Task<bool> RegisterVehicleAsync(string type);
         Task ReloadAsync();
         IEnumerable<CleaningVehicleStatusInfo> GetVehiclesInfo();
+        Task InitializeVehiclesAsync(); 
     }
 }

@@ -70,4 +70,8 @@ app.MapControllerRoute(
 
 app.MapHub<VehicleStatusHub>("/vehiclestatushub");
 
+var cleaningService = app.Services.GetRequiredService<ICleaningProcessService>();
+await cleaningService.InitializeVehiclesAsync();
+
+
 app.Run();
